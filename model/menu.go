@@ -34,3 +34,4 @@ type Admin struct {
 	Password   string `json:"password"` // 密码加盐
 	Salt       string `json:"salt"`     // 盐
 }
+
