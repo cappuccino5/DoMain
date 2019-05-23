@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
@@ -14,64 +16,106 @@ import (
 	"path"
 	"time"
 )
+
+type FileServer struct {
+	Url      string
+	Scene    string
+	FromName string
+}
+
+func newFile(rootPath, fromName string) *FileServer {
+	return &FileServer{
+		Url:    "http://10.0.0.86:8083/group1/big/upload", // "http://127.0.0.1:8083/group1/upload", // "http://10.0.0.193:80/upload",
+		Scene:    rootPath,
+		FromName: fromName,
+	}
+}
+
+var Result = make([]map[string]interface{}, 0)
 //*web或者app上传文件到主服务器，主服务器将文件转存到fastdfs文件存储服务器,本done是本地测试环境*//
-func ImagesTest(f []*multipart.FileHeader) {
+// rootPath = 保存的路径名字 fromName = 保存的文件名
+func ImagesTest(rootPath, fromName string, f []*multipart.FileHeader) {
 	nowTime := time.Now().Unix()
 	var lostTime int64
 	var size int64
+	if rootPath == "" || fromName == "" {
+		fmt.Println("func req param error!")
+		return
+	}
+	ser := newFile(rootPath, fromName)
 	for i := range f {
-		file, err := f[i].Open()
-		if err != nil {
-			fmt.Println("file open fail:", err)
-		}
-		r, err := ImageFileTest(file, f[i])
+		res, err := ser.ImageFileTest(f[i])
 		if err != nil {
 			fmt.Println("image deal:", err)
 		}
 		lostTime = time.Now().Unix()
 		size += f[i].Size
-		fmt.Println(r)
+		fmt.Println(res)
+		Result = append(Result, res)
 	}
 	dealTime := lostTime - nowTime
+	logrus.Println(Result)
 	fmt.Printf("处理时长%v 秒,总大小%v kb\n", dealTime, size)
-
 }
 
 // 图片存储至fastdfs文件服务器,返回url和缩略图url
-func ImageFileTest(f multipart.File, header *multipart.FileHeader) (map[string]interface{}, error) {
-	f1, err := header.Open()
+func (ser *FileServer) ImageFileTest(header *multipart.FileHeader) (map[string]interface{}, error) {
+	var width, height int
+	f, err := header.Open()
 	if err != nil {
 		return nil, err
 	}
-	defer f1.Close()
 	defer f.Close()
-	width, height := ReloadThumbnailSize(header.Filename, f1)
-	imageUrl, err := FileUpdateRequest(f, header)
+	suffix := path.Ext(header.Filename)
+	switch suffix {
+	case ".png":
+		image, _ := png.Decode(f)
+		width, height = resizeImage(image)
+	case ".jpg", ".jpeg":
+		image, _ := jpeg.Decode(f)
+		width, height = resizeImage(image)
+	default:
+		width, height = 200, 200
+	}
+	imageUrl, err := ser.FileUpdateRequest(header)
 	if err != nil {
+		fmt.Println("save image err:", err)
 		return nil, err
 	}
 	resMap := make(map[string]interface{}, 0)
-	resMap["url"] = imageUrl + "?download=0"
-	resMap["thumb_url"] = fmt.Sprintf("%s?download=0&width=%v&height=%v", imageUrl, width, height)
+	resMap["url"] = imageUrl
+	if suffix != ".amr" {
+		resMap["url"] = imageUrl + "?download=0"
+		resMap["thumb_url"] = fmt.Sprintf("%s?download=0&width=%v&height=%v", imageUrl, width, height)
+	}
 	return resMap, nil
 }
 
 // 文件存储至fastdfs文件服务器,返回url
-func FileUpdateRequest(f multipart.File, header *multipart.FileHeader) (string, error) {
+func (ser *FileServer) FileUpdateRequest(header *multipart.FileHeader) (string, error) {
 	var resUrl string
-	data := make([]byte, header.Size)
-	n, _ := f.Read(data)
-	data = data[:n]
-	buf := new(bytes.Buffer)
-	w := multipart.NewWriter(buf)
-	fw, err := w.CreateFormFile("file", header.Filename)
+	file, err := header.Open()
 	if err != nil {
 		return resUrl, err
 	}
-	fw.Write(data)
-	mod := w.FormDataContentType()
+	buf := new(bytes.Buffer)
+	w := multipart.NewWriter(buf)
+	// 自定义路径名字
+	err = w.WriteField("scene", ser.Scene)
+	if err != nil {
+		return resUrl, err
+	}
+	fw, err := w.CreateFormFile(ser.FromName, header.Filename)
+	if err != nil {
+		return resUrl, err
+	}
+	_, err = io.Copy(fw, file)
+	if err != nil {
+		return resUrl, err
+	}
+	methods := w.FormDataContentType()
 	w.Close()
-	res, err := HttpPostMux("http://23.94.160.30:8080/upload", buf, mod)
+	res, err := HttpPostMux(ser.Url, buf, methods)
 	if err != nil {
 		return resUrl, err
 	}
@@ -112,12 +156,13 @@ func resizeImage(img image.Image) (int, int) {
 }
 
 // http post 表单请求
-func HttpPostMux(url string, buf *bytes.Buffer, mod string) ([]byte, error) {
-	req, err := http.NewRequest("POST", url, buf)
+func HttpPostMux(posturl string, buf *bytes.Buffer, mod string) ([]byte, error) {
+	req, err := http.NewRequest("POST", posturl, buf)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", mod)
+
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -155,6 +200,8 @@ func HttpPostProxy(reqUrl string, params map[string]interface{}) ([]byte, error)
 	}
 	return body, nil
 }
+
+
 func HttpGet(getUrl string) ([]byte, error) {
 	fmt.Println(getUrl)
 	resp, err := http.Get(getUrl)
