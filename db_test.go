@@ -13,8 +13,6 @@ func TestConnectDb(t *testing.T) {
 	type DbLogger struct {
 		gorm.Logger
 	}
-	//root:zero_lee@tcp(10.0.0.200:3306)/hisens?charset=utf8&parseTime=True&loc=Local
-	// dialect := fmt.Sprintf("root:zero_lee@tcp(10.0.0.200:3306)/hisens?charset=utf8&parseTime=True&loc=Local")
 	qdb, err := gorm.Open("mysql", "root:zero_lee@tcp(127.0.0.1:3306)/hisens?charset=utf8&parseTime=True&loc=Local")
 	if err != nil {
 		panic(err)
@@ -56,7 +54,7 @@ func connectDb() *gorm.DB {
 	用户账号：root
 	用户密码：zero_lee
 	db_Name：hisens
-	服务器地址和端口：10.0.0.200:3306
+	服务器地址和端口：127.0.0.1:3306
 	*/
 	qdb, err := gorm.Open("mysql", "root:zero_lee@tcp(127.0.0.1:3306)/hisens?charset=utf8&parseTime=True&loc=Local")
 	if err != nil {
